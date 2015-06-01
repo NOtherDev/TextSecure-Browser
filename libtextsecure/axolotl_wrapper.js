@@ -31,18 +31,19 @@
 
     window.textsecure = window.textsecure || {};
     window.textsecure.protocol_wrapper = {
+        var content = proto.message || proto.synchronize;
         handleIncomingPushMessageProto: function(proto) {
             switch(proto.type) {
             case textsecure.protobuf.IncomingPushMessageSignal.Type.PLAINTEXT:
-                return Promise.resolve(textsecure.protobuf.PushMessageContent.decode(proto.message));
+                return Promise.resolve(textsecure.protobuf.PushMessageContent.decode(content));
             case textsecure.protobuf.IncomingPushMessageSignal.Type.CIPHERTEXT:
                 var from = proto.source + "." + (proto.sourceDevice == null ? 0 : proto.sourceDevice);
                 return axolotlInstance.decryptWhisperMessage(from, getString(proto.message)).then(decodeMessageContents);
             case textsecure.protobuf.IncomingPushMessageSignal.Type.PREKEY_BUNDLE:
-                if (proto.message.readUint8() != ((3 << 4) | 3))
+                if (content.readUint8() != ((3 << 4) | 3))
                     throw new Error("Bad version byte");
                 var from = proto.source + "." + (proto.sourceDevice == null ? 0 : proto.sourceDevice);
-                return handlePreKeyWhisperMessage(from, getString(proto.message)).then(decodeMessageContents);
+                return handlePreKeyWhisperMessage(from, getString(content)).then(decodeMessageContents);
             case textsecure.protobuf.IncomingPushMessageSignal.Type.RECEIPT:
                 return Promise.resolve(null);
             default:

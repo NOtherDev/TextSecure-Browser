@@ -50,10 +50,26 @@
                 if (proto.type === textsecure.protobuf.IncomingPushMessageSignal.Type.RECEIPT) {
                     onDeliveryReceipt(proto);
                 } else {
-                    onMessageReceived(proto);
+                    if (proto.message) {
+                        onMessageReceived(proto);
+                    } else if (proto.synchronize) {
+                        if (proto.synchronize.message) {
+                            onMessageReceived(proto);
+                        } else if (proto.synchronize.contact) {
+                            onContactReceived(proto);
+                        } else if (proto.synchronize.group) {
+                            onGroupReceived(proto);
+                        }
+
+                    }
                 }
             });
             messageReceiver.connect();
+        }
+
+        function onGroupReceived() {
+        }
+        function onContactReceived() {
         }
 
         function onMessageReceived(pushMessage) {
