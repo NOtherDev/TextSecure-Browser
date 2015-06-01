@@ -161,8 +161,8 @@ textsecure.processDecrypted = function(decrypted, source) {
         decrypted.sync = null;
     }
 
-    if ((decrypted.flags & textsecure.protobuf.PushMessageContent.Flags.END_SESSION)
-                == textsecure.protobuf.PushMessageContent.Flags.END_SESSION) {
+    if ((decrypted.flags & textsecure.protobuf.Message.Flags.END_SESSION)
+                == textsecure.protobuf.Message.Flags.END_SESSION) {
         decrypted.body = null;
         decrypted.attachments = [];
         decrypted.group = null;
@@ -183,7 +183,7 @@ textsecure.processDecrypted = function(decrypted, source) {
         decrypted.group.id = getString(decrypted.group.id);
         promises.push(textsecure.storage.groups.getNumbers(decrypted.group.id).then(function(existingGroup) {
             if (existingGroup === undefined) {
-                if (decrypted.group.type != textsecure.protobuf.PushMessageContent.GroupContext.Type.UPDATE) {
+                if (decrypted.group.type != textsecure.protobuf.GroupContext.Type.UPDATE) {
                     throw new Error("Got message for unknown group");
                 }
                 if (decrypted.group.avatar !== null) {
@@ -199,7 +199,7 @@ textsecure.processDecrypted = function(decrypted, source) {
                 }
 
                 switch(decrypted.group.type) {
-                case textsecure.protobuf.PushMessageContent.GroupContext.Type.UPDATE:
+                case textsecure.protobuf.GroupContext.Type.UPDATE:
                     if (decrypted.group.avatar !== null)
                         promises.push(handleAttachment(decrypted.group.avatar));
 
@@ -226,11 +226,11 @@ textsecure.processDecrypted = function(decrypted, source) {
                     });
 
                     break;
-                case textsecure.protobuf.PushMessageContent.GroupContext.Type.QUIT:
+                case textsecure.protobuf.GroupContext.Type.QUIT:
                     decrypted.body = null;
                     decrypted.attachments = [];
                     return textsecure.storage.groups.removeNumber(decrypted.group.id, source);
-                case textsecure.protobuf.PushMessageContent.GroupContext.Type.DELIVER:
+                case textsecure.protobuf.GroupContext.Type.DELIVER:
                     decrypted.group.name = null;
                     decrypted.group.members = [];
                     decrypted.group.avatar = null;

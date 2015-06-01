@@ -34,7 +34,7 @@
             }
         },
         isEndSession: function() {
-            var flag = textsecure.protobuf.PushMessageContent.Flags.END_SESSION;
+            var flag = textsecure.protobuf.Message.Flags.END_SESSION;
             return !!(this.get('flags') & flag);
         },
         isGroupUpdate: function() {
@@ -147,7 +147,7 @@
                             type: 'group',
                             groupId: pushMessageContent.group.id,
                         };
-                        if (pushMessageContent.group.type === textsecure.protobuf.PushMessageContent.GroupContext.Type.UPDATE) {
+                        if (pushMessageContent.group.type === textsecure.protobuf.GroupContext.Type.UPDATE) {
                             attributes = {
                                 type       : 'group',
                                 groupId    : pushMessageContent.group.id,
@@ -161,7 +161,7 @@
                                 group_update.joined = difference;
                             }
                         }
-                        else if (pushMessageContent.group.type === textsecure.protobuf.PushMessageContent.GroupContext.Type.QUIT) {
+                        else if (pushMessageContent.group.type === textsecure.protobuf.GroupContext.Type.QUIT) {
                             group_update = { left: source };
                             attributes.members = _.without(conversation.get('members'), source);
                         }

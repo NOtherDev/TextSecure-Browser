@@ -37,15 +37,19 @@
                 // TODO: handle different types of requests. for now we only expect
                 // PUT /messages <encrypted IncomingPushMessageSignal>
                 textsecure.crypto.decryptWebsocketMessage(request.body).then(function(plaintext) {
-                    var proto = textsecure.protobuf.IncomingPushMessageSignal.decode(plaintext);
+                    var proto = textsecure.protobuf.Envelope.decode(plaintext);
                     // After this point, decoding errors are not the server's
                     // fault, and we should handle them gracefully and tell the
                     // user they received an invalid message
                     request.respond(200, 'OK');
 
-                    var ev = new Event('signal');
-                    ev.proto = proto;
-                    eventTarget.dispatchEvent(ev);
+                    if (proto.type === textsecure.protobuf.Envelope.Type.RECEIPT) {
+                        onDeliveryReceipt(proto, eventTarget);
+                    } else if (proto.synchronize) {
+                        handleSyncMessage(proto, eventTarget);
+                    } else {
+                        onMessageReceived(proto, eventTarget);
+                    }
 
                 }).catch(function(e) {
                     console.log("Error handling incoming message:", e);
@@ -62,6 +66,48 @@
             }
         }
     };
+
+    function onDeliveryReceipt(envelope, eventTarget) {
+        var ev = new Event('receipt');
+        ev.proto = envelope;
+        eventTarget.dispatchEvent(ev);
+    }
+    function onMessageReceived(envelope, eventTarget) {
+        var ev = new Event('message');
+        ev.proto = envelope;
+        eventTarget.dispatchEvent(ev);
+    }
+    function onContactsReceived(attachmentPointer, eventTarget) {
+        handleAttachment(attachmentPointer).then(function() {
+            var contactBuffer = new ContactBuffer(attachmentPointer.data);
+            var contactInfo = contactBuffer.readContact();
+            while (contactInfo !== undefined) {
+                var ev = new Event('contact');
+                ev.contactInfo = contactInfo;
+                eventTarget.dispatchEvent(ev);
+                contactInfo = contactBuffer.readContact();
+            }
+        });
+    }
+    function onGroupReceived(envelope, eventTarget) {
+        var ev = new Event('group');
+        ev.group = envelope.group;
+        eventTarget.dispatchEvent(ev);
+    }
+
+    function handleSyncMessage(envelope, eventTarget) {
+        return textsecure.protocol_wrapper.handleIncomingPushMessageProto(envelope).then(
+            function(syncMessage) {
+                if (syncMessage.message) {
+                    onMessageReceived(proto);
+                } else if (syncMessage.contacts) {
+                    onContactsReceived(syncMessage.contacts.blob, eventTarget);
+                } else if (syncMessage.group) {
+                    onGroupReceived(syncMessage.group);
+                }
+            }
+        );
+    }
 
     textsecure.MessageReceiver = MessageReceiver;
 

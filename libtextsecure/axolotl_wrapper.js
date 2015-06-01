@@ -6,10 +6,10 @@
     var axolotlInstance = axolotl.protocol(textsecure.storage.axolotl);
 
     var decodeMessageContents = function(res) {
-        var finalMessage = textsecure.protobuf.PushMessageContent.decode(res[0]);
+        var finalMessage = textsecure.protobuf.Message.decode(res[0]);
 
-        if ((finalMessage.flags & textsecure.protobuf.PushMessageContent.Flags.END_SESSION)
-                == textsecure.protobuf.PushMessageContent.Flags.END_SESSION &&
+        if ((finalMessage.flags & textsecure.protobuf.Message.Flags.END_SESSION)
+                == textsecure.protobuf.Message.Flags.END_SESSION &&
                 finalMessage.sync !== null)
             res[1]();
 
@@ -31,20 +31,20 @@
 
     window.textsecure = window.textsecure || {};
     window.textsecure.protocol_wrapper = {
-        var content = proto.message || proto.synchronize;
         handleIncomingPushMessageProto: function(proto) {
+            var content = proto.message || proto.synchronize;
             switch(proto.type) {
-            case textsecure.protobuf.IncomingPushMessageSignal.Type.PLAINTEXT:
-                return Promise.resolve(textsecure.protobuf.PushMessageContent.decode(content));
-            case textsecure.protobuf.IncomingPushMessageSignal.Type.CIPHERTEXT:
+            case textsecure.protobuf.Envelope.Type.PLAINTEXT:
+                return Promise.resolve(textsecure.protobuf.Message.decode(content));
+            case textsecure.protobuf.Envelope.Type.CIPHERTEXT:
                 var from = proto.source + "." + (proto.sourceDevice == null ? 0 : proto.sourceDevice);
                 return axolotlInstance.decryptWhisperMessage(from, getString(proto.message)).then(decodeMessageContents);
-            case textsecure.protobuf.IncomingPushMessageSignal.Type.PREKEY_BUNDLE:
+            case textsecure.protobuf.Envelope.Type.PREKEY_BUNDLE:
                 if (content.readUint8() != ((3 << 4) | 3))
                     throw new Error("Bad version byte");
                 var from = proto.source + "." + (proto.sourceDevice == null ? 0 : proto.sourceDevice);
                 return handlePreKeyWhisperMessage(from, getString(content)).then(decodeMessageContents);
-            case textsecure.protobuf.IncomingPushMessageSignal.Type.RECEIPT:
+            case textsecure.protobuf.Envelope.Type.RECEIPT:
                 return Promise.resolve(null);
             default:
                 return new Promise(function(resolve, reject) { reject(new Error("Unknown message type")); });

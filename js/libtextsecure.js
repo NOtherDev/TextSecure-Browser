@@ -37785,10 +37785,10 @@ axolotlInternal.RecipientRecord = function() {
     var axolotlInstance = axolotl.protocol(textsecure.storage.axolotl);
 
     var decodeMessageContents = function(res) {
-        var finalMessage = textsecure.protobuf.PushMessageContent.decode(res[0]);
+        var finalMessage = textsecure.protobuf.Message.decode(res[0]);
 
-        if ((finalMessage.flags & textsecure.protobuf.PushMessageContent.Flags.END_SESSION)
-                == textsecure.protobuf.PushMessageContent.Flags.END_SESSION &&
+        if ((finalMessage.flags & textsecure.protobuf.Message.Flags.END_SESSION)
+                == textsecure.protobuf.Message.Flags.END_SESSION &&
                 finalMessage.sync !== null)
             res[1]();
 
@@ -37811,18 +37811,19 @@ axolotlInternal.RecipientRecord = function() {
     window.textsecure = window.textsecure || {};
     window.textsecure.protocol_wrapper = {
         handleIncomingPushMessageProto: function(proto) {
+            var content = proto.message || proto.synchronize;
             switch(proto.type) {
-            case textsecure.protobuf.IncomingPushMessageSignal.Type.PLAINTEXT:
-                return Promise.resolve(textsecure.protobuf.PushMessageContent.decode(proto.message));
-            case textsecure.protobuf.IncomingPushMessageSignal.Type.CIPHERTEXT:
+            case textsecure.protobuf.Envelope.Type.PLAINTEXT:
+                return Promise.resolve(textsecure.protobuf.Message.decode(content));
+            case textsecure.protobuf.Envelope.Type.CIPHERTEXT:
                 var from = proto.source + "." + (proto.sourceDevice == null ? 0 : proto.sourceDevice);
                 return axolotlInstance.decryptWhisperMessage(from, getString(proto.message)).then(decodeMessageContents);
-            case textsecure.protobuf.IncomingPushMessageSignal.Type.PREKEY_BUNDLE:
-                if (proto.message.readUint8() != ((3 << 4) | 3))
+            case textsecure.protobuf.Envelope.Type.PREKEY_BUNDLE:
+                if (content.readUint8() != ((3 << 4) | 3))
                     throw new Error("Bad version byte");
                 var from = proto.source + "." + (proto.sourceDevice == null ? 0 : proto.sourceDevice);
-                return handlePreKeyWhisperMessage(from, getString(proto.message)).then(decodeMessageContents);
-            case textsecure.protobuf.IncomingPushMessageSignal.Type.RECEIPT:
+                return handlePreKeyWhisperMessage(from, getString(content)).then(decodeMessageContents);
+            case textsecure.protobuf.Envelope.Type.RECEIPT:
                 return Promise.resolve(null);
             default:
                 return new Promise(function(resolve, reject) { reject(new Error("Unknown message type")); });
@@ -38746,8 +38747,8 @@ textsecure.processDecrypted = function(decrypted, source) {
         decrypted.sync = null;
     }
 
-    if ((decrypted.flags & textsecure.protobuf.PushMessageContent.Flags.END_SESSION)
-                == textsecure.protobuf.PushMessageContent.Flags.END_SESSION) {
+    if ((decrypted.flags & textsecure.protobuf.Message.Flags.END_SESSION)
+                == textsecure.protobuf.Message.Flags.END_SESSION) {
         decrypted.body = null;
         decrypted.attachments = [];
         decrypted.group = null;
@@ -38768,7 +38769,7 @@ textsecure.processDecrypted = function(decrypted, source) {
         decrypted.group.id = getString(decrypted.group.id);
         promises.push(textsecure.storage.groups.getNumbers(decrypted.group.id).then(function(existingGroup) {
             if (existingGroup === undefined) {
-                if (decrypted.group.type != textsecure.protobuf.PushMessageContent.GroupContext.Type.UPDATE) {
+                if (decrypted.group.type != textsecure.protobuf.GroupContext.Type.UPDATE) {
                     throw new Error("Got message for unknown group");
                 }
                 if (decrypted.group.avatar !== null) {
@@ -38784,7 +38785,7 @@ textsecure.processDecrypted = function(decrypted, source) {
                 }
 
                 switch(decrypted.group.type) {
-                case textsecure.protobuf.PushMessageContent.GroupContext.Type.UPDATE:
+                case textsecure.protobuf.GroupContext.Type.UPDATE:
                     if (decrypted.group.avatar !== null)
                         promises.push(handleAttachment(decrypted.group.avatar));
 
@@ -38811,11 +38812,11 @@ textsecure.processDecrypted = function(decrypted, source) {
                     });
 
                     break;
-                case textsecure.protobuf.PushMessageContent.GroupContext.Type.QUIT:
+                case textsecure.protobuf.GroupContext.Type.QUIT:
                     decrypted.body = null;
                     decrypted.attachments = [];
                     return textsecure.storage.groups.removeNumber(decrypted.group.id, source);
-                case textsecure.protobuf.PushMessageContent.GroupContext.Type.DELIVER:
+                case textsecure.protobuf.GroupContext.Type.DELIVER:
                     decrypted.group.name = null;
                     decrypted.group.members = [];
                     decrypted.group.avatar = null;
@@ -39493,15 +39494,19 @@ function generateKeys(count, progressCallback) {
                 // TODO: handle different types of requests. for now we only expect
                 // PUT /messages <encrypted IncomingPushMessageSignal>
                 textsecure.crypto.decryptWebsocketMessage(request.body).then(function(plaintext) {
-                    var proto = textsecure.protobuf.IncomingPushMessageSignal.decode(plaintext);
+                    var proto = textsecure.protobuf.Envelope.decode(plaintext);
                     // After this point, decoding errors are not the server's
                     // fault, and we should handle them gracefully and tell the
                     // user they received an invalid message
                     request.respond(200, 'OK');
 
-                    var ev = new Event('signal');
-                    ev.proto = proto;
-                    eventTarget.dispatchEvent(ev);
+                    if (proto.type === textsecure.protobuf.Envelope.Type.RECEIPT) {
+                        onDeliveryReceipt(proto, eventTarget);
+                    } else if (proto.synchronize) {
+                        handleSyncMessage(proto, eventTarget);
+                    } else {
+                        onMessageReceived(proto, eventTarget);
+                    }
 
                 }).catch(function(e) {
                     console.log("Error handling incoming message:", e);
@@ -39518,6 +39523,48 @@ function generateKeys(count, progressCallback) {
             }
         }
     };
+
+    function onDeliveryReceipt(envelope, eventTarget) {
+        var ev = new Event('receipt');
+        ev.proto = envelope;
+        eventTarget.dispatchEvent(ev);
+    }
+    function onMessageReceived(envelope, eventTarget) {
+        var ev = new Event('message');
+        ev.proto = envelope;
+        eventTarget.dispatchEvent(ev);
+    }
+    function onContactsReceived(attachmentPointer, eventTarget) {
+        handleAttachment(attachmentPointer).then(function() {
+            var contactBuffer = new ContactBuffer(attachmentPointer.data);
+            var contactInfo = contactBuffer.readContact();
+            while (contactInfo !== undefined) {
+                var ev = new Event('contact');
+                ev.contactInfo = contactInfo;
+                eventTarget.dispatchEvent(ev);
+                contactInfo = contactBuffer.readContact();
+            }
+        });
+    }
+    function onGroupReceived(envelope, eventTarget) {
+        var ev = new Event('group');
+        ev.group = envelope.group;
+        eventTarget.dispatchEvent(ev);
+    }
+
+    function handleSyncMessage(envelope, eventTarget) {
+        return textsecure.protocol_wrapper.handleIncomingPushMessageProto(envelope).then(
+            function(syncMessage) {
+                if (syncMessage.message) {
+                    onMessageReceived(proto);
+                } else if (syncMessage.contacts) {
+                    onContactsReceived(syncMessage.contacts.blob, eventTarget);
+                } else if (syncMessage.group) {
+                    onGroupReceived(syncMessage.group);
+                }
+            }
+        );
+    }
 
     textsecure.MessageReceiver = MessageReceiver;
 
@@ -39638,11 +39685,11 @@ window.textsecure.messaging = function() {
                 if (numberIndex < 0) // This is potentially a multi-message rare racing-AJAX race
                     return Promise.reject("Tried to refresh group to non-member");
 
-                var proto = new textsecure.protobuf.PushMessageContent();
-                proto.group = new textsecure.protobuf.PushMessageContent.GroupContext();
+                var proto = new textsecure.protobuf.Message();
+                proto.group = new textsecure.protobuf.GroupContext();
 
                 proto.group.id = toArrayBuffer(group.id);
-                proto.group.type = textsecure.protobuf.PushMessageContent.GroupContext.Type.UPDATE;
+                proto.group.type = textsecure.protobuf.GroupContext.Type.UPDATE;
                 proto.group.members = group.numbers;
                 proto.group.name = group.name === undefined ? null : group.name;
 
@@ -39659,7 +39706,7 @@ window.textsecure.messaging = function() {
     }
 
     var tryMessageAgain = function(number, encodedMessage, timestamp) {
-        var proto = textsecure.protobuf.PushMessageContent.decode(encodedMessage);
+        var proto = textsecure.protobuf.Message.decode(encodedMessage);
         return new Promise(function(resolve, reject) {
             sendMessageProto(timestamp, [number], proto, function(res) {
                 if (res.failure.length > 0)
@@ -39705,7 +39752,7 @@ window.textsecure.messaging = function() {
 
         doSendMessage = function(number, devicesForNumber, recurse) {
             var groupUpdate = Promise.resolve(true);
-            if (message.group && message.group.id && message.group.type != textsecure.protobuf.PushMessageContent.GroupContext.Type.QUIT)
+            if (message.group && message.group.id && message.group.type != textsecure.protobuf.GroupContext.Type.QUIT)
                 groupUpdate = refreshGroup(number, message.group.id, devicesForNumber);
             return groupUpdate.then(function() {
                 return sendMessageToDevices(timestamp, number, devicesForNumber, message).then(function(result) {
@@ -39771,7 +39818,7 @@ window.textsecure.messaging = function() {
     }
 
     makeAttachmentPointer = function(attachment) {
-        var proto = new textsecure.protobuf.PushMessageContent.AttachmentPointer();
+        var proto = new textsecure.protobuf.AttachmentPointer();
         proto.key = textsecure.crypto.getRandomBytes(64);
 
         var iv = textsecure.crypto.getRandomBytes(16);
@@ -39799,8 +39846,9 @@ window.textsecure.messaging = function() {
         var myNumber = textsecure.storage.user.getNumber();
         var myDevice = textsecure.storage.user.getDeviceId();
         if (myDevice != 1) {
-            var sync_message = textsecure.protobuf.PushMessageContent.decode(message.encode());
-            sync_message.sync = new textsecure.protobuf.PushMessageContent.SyncMessageContext();
+            var sync_message = textsecure.protobuf.Message.decode(message.encode());
+            // todo
+            sync_message.sync = new textsecure.protobuf.Message.SyncMessageContext();
             if (destination) {
                 sync_message.sync.destination = destination;
             }
@@ -39827,7 +39875,7 @@ window.textsecure.messaging = function() {
     }
 
     self.sendMessageToNumber = function(number, messageText, attachments, timestamp) {
-        var proto = new textsecure.protobuf.PushMessageContent();
+        var proto = new textsecure.protobuf.Message();
         proto.body = messageText;
 
         var promises = [];
@@ -39842,9 +39890,9 @@ window.textsecure.messaging = function() {
     }
 
     self.closeSession = function(number) {
-        var proto = new textsecure.protobuf.PushMessageContent();
+        var proto = new textsecure.protobuf.Message();
         proto.body = "TERMINATE";
-        proto.flags = textsecure.protobuf.PushMessageContent.Flags.END_SESSION;
+        proto.flags = textsecure.protobuf.Message.Flags.END_SESSION;
         return sendIndividualProto(number, proto, Date.now()).then(function(res) {
             return textsecure.storage.devices.getDeviceObjectsForNumber(number).then(function(devices) {
                 return Promise.all(devices.map(function(device) {
@@ -39857,11 +39905,11 @@ window.textsecure.messaging = function() {
     }
 
     self.sendMessageToGroup = function(groupId, messageText, attachments, timestamp) {
-        var proto = new textsecure.protobuf.PushMessageContent();
+        var proto = new textsecure.protobuf.Message();
         proto.body = messageText;
-        proto.group = new textsecure.protobuf.PushMessageContent.GroupContext();
+        proto.group = new textsecure.protobuf.GroupContext();
         proto.group.id = toArrayBuffer(groupId);
-        proto.group.type = textsecure.protobuf.PushMessageContent.GroupContext.Type.DELIVER;
+        proto.group.type = textsecure.protobuf.GroupContext.Type.DELIVER;
 
         return textsecure.storage.groups.getNumbers(groupId).then(function(numbers) {
             if (numbers === undefined)
@@ -39878,14 +39926,14 @@ window.textsecure.messaging = function() {
     }
 
     self.createGroup = function(numbers, name, avatar) {
-        var proto = new textsecure.protobuf.PushMessageContent();
-        proto.group = new textsecure.protobuf.PushMessageContent.GroupContext();
+        var proto = new textsecure.protobuf.Message();
+        proto.group = new textsecure.protobuf.GroupContext();
 
         return textsecure.storage.groups.createNewGroup(numbers).then(function(group) {
             proto.group.id = toArrayBuffer(group.id);
             var numbers = group.numbers;
 
-            proto.group.type = textsecure.protobuf.PushMessageContent.GroupContext.Type.UPDATE;
+            proto.group.type = textsecure.protobuf.GroupContext.Type.UPDATE;
             proto.group.members = numbers;
             proto.group.name = name;
 
@@ -39905,11 +39953,11 @@ window.textsecure.messaging = function() {
     }
 
     self.updateGroup = function(groupId, name, avatar, numbers) {
-        var proto = new textsecure.protobuf.PushMessageContent();
-        proto.group = new textsecure.protobuf.PushMessageContent.GroupContext();
+        var proto = new textsecure.protobuf.Message();
+        proto.group = new textsecure.protobuf.GroupContext();
 
         proto.group.id = toArrayBuffer(groupId);
-        proto.group.type = textsecure.protobuf.PushMessageContent.GroupContext.Type.UPDATE;
+        proto.group.type = textsecure.protobuf.GroupContext.Type.UPDATE;
         proto.group.name = name;
 
         return textsecure.storage.groups.addNumbers(groupId, numbers).then(function(numbers) {
@@ -39934,10 +39982,10 @@ window.textsecure.messaging = function() {
     }
 
     self.addNumberToGroup = function(groupId, number) {
-        var proto = new textsecure.protobuf.PushMessageContent();
-        proto.group = new textsecure.protobuf.PushMessageContent.GroupContext();
+        var proto = new textsecure.protobuf.Message();
+        proto.group = new textsecure.protobuf.GroupContext();
         proto.group.id = toArrayBuffer(groupId);
-        proto.group.type = textsecure.protobuf.PushMessageContent.GroupContext.Type.UPDATE;
+        proto.group.type = textsecure.protobuf.GroupContext.Type.UPDATE;
 
         return textsecure.storage.groups.addNumbers(groupId, [number]).then(function(numbers) {
             if (numbers === undefined)
@@ -39949,10 +39997,10 @@ window.textsecure.messaging = function() {
     }
 
     self.setGroupName = function(groupId, name) {
-        var proto = new textsecure.protobuf.PushMessageContent();
-        proto.group = new textsecure.protobuf.PushMessageContent.GroupContext();
+        var proto = new textsecure.protobuf.Message();
+        proto.group = new textsecure.protobuf.GroupContext();
         proto.group.id = toArrayBuffer(groupId);
-        proto.group.type = textsecure.protobuf.PushMessageContent.GroupContext.Type.UPDATE;
+        proto.group.type = textsecure.protobuf.GroupContext.Type.UPDATE;
         proto.group.name = name;
 
         return textsecure.storage.groups.getNumbers(groupId).then(function(numbers) {
@@ -39965,10 +40013,10 @@ window.textsecure.messaging = function() {
     }
 
     self.setGroupAvatar = function(groupId, avatar) {
-        var proto = new textsecure.protobuf.PushMessageContent();
-        proto.group = new textsecure.protobuf.PushMessageContent.GroupContext();
+        var proto = new textsecure.protobuf.Message();
+        proto.group = new textsecure.protobuf.GroupContext();
         proto.group.id = toArrayBuffer(groupId);
-        proto.group.type = textsecure.protobuf.PushMessageContent.GroupContext.Type.UPDATE;
+        proto.group.type = textsecure.protobuf.GroupContext.Type.UPDATE;
 
         return textsecure.storage.groups.getNumbers(groupId).then(function(numbers) {
             if (numbers === undefined)
@@ -39983,10 +40031,10 @@ window.textsecure.messaging = function() {
     }
 
     self.leaveGroup = function(groupId) {
-        var proto = new textsecure.protobuf.PushMessageContent();
-        proto.group = new textsecure.protobuf.PushMessageContent.GroupContext();
+        var proto = new textsecure.protobuf.Message();
+        proto.group = new textsecure.protobuf.GroupContext();
         proto.group.id = toArrayBuffer(groupId);
-        proto.group.type = textsecure.protobuf.PushMessageContent.GroupContext.Type.QUIT;
+        proto.group.type = textsecure.protobuf.GroupContext.Type.QUIT;
 
         return textsecure.storage.groups.getNumbers(groupId).then(function(numbers) {
             if (numbers === undefined)
@@ -39999,4 +40047,30 @@ window.textsecure.messaging = function() {
 
     return self;
 }();
+
+/*
+ * vim: ts=4:sw=4:expandtab
+ */
+function ContactBuffer(arrayBuffer) {
+    this.buffer = new dCodeIO.ByteBuffer(arrayBuffer);
+}
+ContactBuffer.prototype = {
+    constructor: ContactBuffer,
+    readContact: function() {
+        try {
+            var len = this.buffer.readVarint32();
+            this.buffer.skip(len);
+            var contactInfo = textsecure.protobuf.ContactDetails.decode(
+                this.buffer.slice(this.buffer.offset, len)
+            );
+            var attachmentLen = contactInfo.avatar.length;
+            contactInfo.avatar.data = this.buffer.slice(this.buffer.offset, attachmentLen).toArrayBuffer(true /* copy? */);
+            this.buffer.skip(attachmentLen);
+
+            return contactInfo;
+        } catch(e) {
+            console.log(e);
+        }
+    }
+};
 })();

@@ -45,34 +45,34 @@
 
             // initialize the socket and start listening for messages
             messageReceiver = new textsecure.MessageReceiver(window);
-            window.addEventListener('signal', function(ev) {
-                var proto = ev.proto;
-                if (proto.type === textsecure.protobuf.IncomingPushMessageSignal.Type.RECEIPT) {
-                    onDeliveryReceipt(proto);
-                } else {
-                    if (proto.message) {
-                        onMessageReceived(proto);
-                    } else if (proto.synchronize) {
-                        if (proto.synchronize.message) {
-                            onMessageReceived(proto);
-                        } else if (proto.synchronize.contact) {
-                            onContactReceived(proto);
-                        } else if (proto.synchronize.group) {
-                            onGroupReceived(proto);
-                        }
-
-                    }
-                }
-            });
+            window.addEventListener('contact', onContactReceived);
+            window.addEventListener('receipt', onDeliveryReceipt);
+            window.addEventListener('message', onMessageReceived);
             messageReceiver.connect();
         }
 
-        function onGroupReceived() {
+        function onContactReceived(contactInfo) {
+            new Whisper.Conversation({
+                name: contactInfo.name,
+                id: contactInfo.number,
+                avatar: contactInfo.avatar,
+                type: 'private',
+                active_at: null
+            }).save();
         }
-        function onContactReceived() {
+        function onGroupReceived(group) {
+            new Whisper.Conversation({
+                members: group.members,
+                name: group.name,
+                id: group.id,
+                avatar: group.avatar,
+                type: 'group',
+                active_at: null
+            }).save();
         }
 
-        function onMessageReceived(pushMessage) {
+        function onMessageReceived(ev) {
+            var pushMessage = ev.proto;
             var now = new Date().getTime();
             var timestamp = pushMessage.timestamp.toNumber();
 
@@ -119,7 +119,8 @@
         // lazy hack
         window.receipts = new Backbone.Collection();
 
-        function onDeliveryReceipt(pushMessage) {
+        function onDeliveryReceipt(ev) {
+            var pushMessage = ev.proto;
             var timestamp = pushMessage.timestamp.toNumber();
             var messages  = new Whisper.MessageCollection();
             var groups    = new Whisper.ConversationCollection();
