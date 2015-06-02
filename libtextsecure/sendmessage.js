@@ -274,14 +274,15 @@ window.textsecure.messaging = function() {
         var myNumber = textsecure.storage.user.getNumber();
         var myDevice = textsecure.storage.user.getDeviceId();
         if (myDevice != 1) {
-            var sync_message = textsecure.protobuf.Message.decode(message.encode());
-            // todo
-            sync_message.sync = new textsecure.protobuf.Message.SyncMessageContext();
+            var sentMessage = new textsecure.protobuf.SyncMessage.SentMessage();
+            sentMessage.timestamp = timestamp;
+            sentMessage.message = message;
             if (destination) {
-                sync_message.sync.destination = destination;
+                sentMessage.destination = destination;
             }
-            sync_message.sync.timestamp = timestamp;
-            return sendIndividualProto(myNumber, sync_message, Date.now());
+            var syncMessage = new textsecure.protobuf.SyncMessage();
+            syncMessage.sent = sentMessage;
+            return sendIndividualProto(myNumber, syncMessage, Date.now());
         }
     }
 
