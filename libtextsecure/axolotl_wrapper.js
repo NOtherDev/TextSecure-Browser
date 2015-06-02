@@ -31,23 +31,18 @@
 
     window.textsecure = window.textsecure || {};
     window.textsecure.protocol_wrapper = {
-        handleIncomingPushMessageProto: function(proto) {
-            var content = proto.message || proto.synchronize;
-            switch(proto.type) {
-            case textsecure.protobuf.Envelope.Type.PLAINTEXT:
-                return Promise.resolve(textsecure.protobuf.Message.decode(content));
+        handleEncryptedMessage: function(source, sourceDevice, type, blob) {
+            sourceDevice = sourceDevice || 0;
+            var fromAddress = [source, sourceDevice].join('.');
+            switch(type) {
             case textsecure.protobuf.Envelope.Type.CIPHERTEXT:
-                var from = proto.source + "." + (proto.sourceDevice == null ? 0 : proto.sourceDevice);
-                return axolotlInstance.decryptWhisperMessage(from, getString(proto.message)).then(decodeMessageContents);
+                return axolotlInstance.decryptWhisperMessage(fromAddress, getString(blob)).then(decodeMessageContents);
             case textsecure.protobuf.Envelope.Type.PREKEY_BUNDLE:
-                if (content.readUint8() != ((3 << 4) | 3))
+                if (blob.readUint8() != ((3 << 4) | 3))
                     throw new Error("Bad version byte");
-                var from = proto.source + "." + (proto.sourceDevice == null ? 0 : proto.sourceDevice);
-                return handlePreKeyWhisperMessage(from, getString(content)).then(decodeMessageContents);
-            case textsecure.protobuf.Envelope.Type.RECEIPT:
-                return Promise.resolve(null);
+                return handlePreKeyWhisperMessage(fromAddress, getString(blob)).then(decodeMessageContents);
             default:
-                return new Promise(function(resolve, reject) { reject(new Error("Unknown message type")); });
+                return new Promise.reject(new Error("Unknown message type"));
             }
         },
         closeOpenSessionForDevice: function(encodedNumber) {

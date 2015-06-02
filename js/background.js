@@ -92,7 +92,12 @@
 
             message.save().then(function() {
                 return new Promise(function(resolve) {
-                    resolve(textsecure.protocol_wrapper.handleIncomingPushMessageProto(pushMessage).then(
+                    resolve(textsecure.protocol_wrapper.handleEncryptedMessage(
+                            pushMessage.source,
+                            pushMessage.sourceDevice,
+                            pushMessage.type,
+                            pushMessage.message
+                        ).then(
                         function(pushMessageContent) {
                             message.handlePushMessageContent(pushMessageContent);
                         }
