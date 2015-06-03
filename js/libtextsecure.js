@@ -39535,16 +39535,17 @@ function generateKeys(count, progressCallback) {
                 envelope.synchronize
             ).then(function(syncMessage) {
                 if (syncMessage.message) {
-                    this.onMessageReceived(proto);
+                    this.onMessageReceived(envelope);
                 } else if (syncMessage.contacts) {
-                    this.onContactsReceived(syncMessage.contacts.blob);
+                    this.onContactsReceived(syncMessage.contacts);
                 } else if (syncMessage.group) {
                     this.onGroupReceived(syncMessage.group);
                 }
             }.bind(this));
         },
-        onContactsReceived: function(attachmentPointer) {
+        onContactsReceived: function(contacts) {
             var eventTarget = this.target;
+            var attachmentPointer = contacts.blob;
             handleAttachment(attachmentPointer).then(function() {
                 var contactBuffer = new ContactBuffer(attachmentPointer.data);
                 var contactInfo = contactBuffer.readContact();
