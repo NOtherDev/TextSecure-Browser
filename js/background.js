@@ -48,6 +48,7 @@
             window.addEventListener('contact', onContactReceived);
             window.addEventListener('receipt', onDeliveryReceipt);
             window.addEventListener('message', onMessageReceived);
+            window.addEventListener('group', onGroupReceived);
             messageReceiver.connect();
         }
 
