@@ -1,8 +1,3 @@
-package textsecure;
-
-option java_package = "org.whispersystems.textsecure.internal.push";
-option java_outer_classname = "TextSecureProtos";
-
 message Envelope {
   enum Type {
     UNKNOWN       = 0;
@@ -12,16 +7,21 @@ message Envelope {
     RECEIPT       = 5;
   }
 
-  optional Type   type         = 1;
-  optional string source       = 2;
-  optional uint32 sourceDevice = 7;
-  optional string relay        = 3;
-  optional uint64 timestamp    = 5;
-  optional bytes  message      = 6; // Contains an encrypted Message
-  optional bytes  synchronize  = 8; // Contains an encrypted SyncMessage
+  optional Type   type          = 1;
+  optional string source        = 2;
+  optional uint32 sourceDevice  = 7;
+  optional string relay         = 3;
+  optional uint64 timestamp     = 5;
+  optional bytes  legacyMessage = 6; // Contains an encrypted DataMessage
+  optional bytes  content       = 8; // Contains an encrypted Content
 }
 
-message Message {
+message Content {
+  optional DataMessage dataMessage = 1;
+  optional SyncMessage syncMessage = 2;
+}
+
+message DataMessage {
   enum Flags {
     END_SESSION = 1;
   }
@@ -30,23 +30,26 @@ message Message {
   repeated AttachmentPointer  attachments = 2;
   optional GroupContext       group       = 3;
   optional uint32             flags       = 4;
-//  optional SyncMessageContext sync        = 5;
 }
 
 message SyncMessage {
-  message SentMessage {
+  message Sent {
     optional string  destination = 1;
     optional uint64  timestamp   = 2;
-    optional Message message     = 3;
+    optional DataMessage message     = 3;
   }
 
-  message ContactMessage {
+  message Contacts {
     optional AttachmentPointer blob = 1;
   }
 
-  optional SentMessage    sent     = 1;
-  optional ContactMessage contacts = 2;
-  optional GroupContext   group    = 3;
+  message Group {
+    optional GroupContext group = 1;
+  }
+
+  optional Sent     sent     = 1;
+  optional Contacts contacts = 2;
+  optional Group    group    = 3;
 }
 
 message AttachmentPointer {
