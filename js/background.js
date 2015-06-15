@@ -49,6 +49,7 @@
             window.addEventListener('receipt', onDeliveryReceipt);
             window.addEventListener('message', onMessageReceived);
             window.addEventListener('group', onGroupReceived);
+            window.addEventListener('error', onError);
             messageReceiver.connect();
         }
 
@@ -61,6 +62,7 @@
                 active_at: null
             }).save();
         }
+
         function onGroupReceived(group) {
             new Whisper.Conversation({
                 members: group.members,
@@ -72,18 +74,42 @@
             }).save();
         }
 
+        function onError(ev) {
+            var e = ev.error;
+            var envelope = ev.proto;
+            var message = initMessage(envelope.source, envelope.timestamp.toNumber());
+            if (e.name === 'IncomingIdentityKeyError') {
+                message.save({ errors : [e] }).then(function() {
+                    extension.trigger('updateInbox');
+                    notifyConversation(message);
+                });
+            }
+            else if (e.message !== 'Bad MAC') {
+                message.save({ errors : [ _.pick(e, ['name', 'message'])]}).then(function() {
+                    extension.trigger('updateInbox');
+                    notifyConversation(message);
+                });
+            }
+            else {
+                console.log(e);
+                throw e;
+            }
+        }
+
         function onMessageReceived(ev) {
-            var pushMessage = ev.proto;
+            var envelope = ev.proto;
+            var message = initMessage(envelope.source, envelope.timestamp.toNumber());
+            message.handlePushMessageContent(envelope.message);
+        }
+
+        function initMessage(source, timestamp) {
             var now = new Date().getTime();
-            var timestamp = pushMessage.timestamp.toNumber();
 
             var message = new Whisper.Message({
-                source         : pushMessage.source,
-                sourceDevice   : pushMessage.sourceDevice,
-                relay          : pushMessage.relay,
+                source         : source,
                 sent_at        : timestamp,
                 received_at    : now,
-                conversationId : pushMessage.source,
+                conversationId : source,
                 type           : 'incoming'
             });
 
@@ -91,35 +117,7 @@
             storage.put("unreadCount", newUnreadCount);
             extension.navigator.setBadgeText(newUnreadCount);
 
-            message.save().then(function() {
-                return new Promise(function(resolve) {
-                    resolve(textsecure.protocol_wrapper.handleEncryptedMessage(
-                            pushMessage.source,
-                            pushMessage.sourceDevice,
-                            pushMessage.type,
-                            pushMessage.message
-                        ).then(
-                        function(pushMessageContent) {
-                            message.handlePushMessageContent(pushMessageContent);
-                        }
-                    ));
-                }).catch(function(e) {
-                    if (e.name === 'IncomingIdentityKeyError') {
-                        message.save({ errors : [e] }).then(function() {
-                            extension.trigger('updateInbox');
-                            notifyConversation(message);
-                        });
-                    } else if (e.message === 'Bad MAC') {
-                        message.save({ errors : [ _.pick(e, ['name', 'message'])]}).then(function() {
-                            extension.trigger('updateInbox');
-                            notifyConversation(message);
-                        });
-                    } else {
-                        console.log(e);
-                        throw e;
-                    }
-                });
-            });
+            return message;
         }
 
         // lazy hack

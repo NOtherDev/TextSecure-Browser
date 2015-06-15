@@ -37810,16 +37810,16 @@ axolotlInternal.RecipientRecord = function() {
 
     window.textsecure = window.textsecure || {};
     window.textsecure.protocol_wrapper = {
-        handleEncryptedMessage: function(source, sourceDevice, type, blob) {
+        decrypt: function(source, sourceDevice, type, blob) {
             sourceDevice = sourceDevice || 0;
             var fromAddress = [source, sourceDevice].join('.');
             switch(type) {
             case textsecure.protobuf.Envelope.Type.CIPHERTEXT:
-                return axolotlInstance.decryptWhisperMessage(fromAddress, getString(blob)).then(decodeMessageContents);
+                return axolotlInstance.decryptWhisperMessage(fromAddress, getString(blob));
             case textsecure.protobuf.Envelope.Type.PREKEY_BUNDLE:
                 if (blob.readUint8() != ((3 << 4) | 3))
                     throw new Error("Bad version byte");
-                return handlePreKeyWhisperMessage(fromAddress, getString(blob)).then(decodeMessageContents);
+                return handlePreKeyWhisperMessage(fromAddress, getString(blob));
             default:
                 return new Promise.reject(new Error("Unknown message type"));
             }
@@ -39501,7 +39501,7 @@ function generateKeys(count, progressCallback) {
                 } else if (proto.synchronize) {
                     this.handleSyncMessage(proto);
                 } else {
-                    this.onMessageReceived(proto);
+                    this.handleMessage(proto);
                 }
 
             }.bind(this)).catch(function(e) {
@@ -39522,20 +39522,51 @@ function generateKeys(count, progressCallback) {
             ev.proto = envelope;
             this.target.dispatchEvent(ev);
         },
-        onMessageReceived: function(envelope) {
-            var ev = new Event('message');
-            ev.proto = envelope;
-            this.target.dispatchEvent(ev);
+        onMessageReceived: function(envelope, message, close_session) {
+            if ((message.flags & textsecure.protobuf.Message.Flags.END_SESSION)
+                == textsecure.protobuf.Message.Flags.END_SESSION ) {
+                close_session();
+            }
+            return textsecure.processDecrypted(message, envelope.source).then(function(message) {
+                envelope.message = message;
+                var ev = new event('message');
+                ev.proto = envelope;
+                this.target.dispatchevent(ev);
+            }.bind(this));
+        },
+        handleMessage: function (envelope) {
+            return textsecure.protocol_wrapper.decrypt(
+                envelope.source,
+                envelope.sourceDevice,
+                envelope.type,
+                envelope.message
+            ).then(function(result) {
+                var plaintext = result[0]; // array buffer
+                var close_session = result[1]; // function
+                var message = textsecure.protobuf.Message.decode(plaintext);
+                return this.onMessageReceived(envelope, message, close_session);
+            }.bind(this)).catch(function() {
+                var ev = new event('error');
+                ev.proto = envelope;
+                this.target.dispatchevent(ev);
+            }.bind(this));
         },
         handleSyncMessage: function (envelope) {
-            return textsecure.protocol_wrapper.handleEncryptedMessage(
+            return textsecure.protocol_wrapper.decrypt(
                 envelope.source,
                 envelope.sourceDevice,
                 envelope.type,
                 envelope.synchronize
-            ).then(function(syncMessage) {
-                if (syncMessage.message) {
-                    this.onMessageReceived(envelope);
+            ).then(function(result) {
+                var plaintext = result[0]; // array buffer
+                var close_session = result[1]; // function
+                var syncMessage = textsecure.protobuf.SyncMessage.decode(plaintext);
+
+                if (syncMessage.sent) {
+                    var message = syncMessage.sent.message;
+                    syncMessage.sent.message = null;
+                    message.sync = syncMessage.sent;
+                    return this.onMessageReceived(envelope, message, close_session);
                 } else if (syncMessage.contacts) {
                     this.onContactsReceived(syncMessage.contacts);
                 } else if (syncMessage.group) {
@@ -39546,7 +39577,7 @@ function generateKeys(count, progressCallback) {
         onContactsReceived: function(contacts) {
             var eventTarget = this.target;
             var attachmentPointer = contacts.blob;
-            handleAttachment(attachmentPointer).then(function() {
+            return handleAttachment(attachmentPointer).then(function() {
                 var contactBuffer = new ContactBuffer(attachmentPointer.data);
                 var contactInfo = contactBuffer.readContact();
                 while (contactInfo !== undefined) {

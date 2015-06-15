@@ -31,16 +31,16 @@
 
     window.textsecure = window.textsecure || {};
     window.textsecure.protocol_wrapper = {
-        handleEncryptedMessage: function(source, sourceDevice, type, blob) {
+        decrypt: function(source, sourceDevice, type, blob) {
             sourceDevice = sourceDevice || 0;
             var fromAddress = [source, sourceDevice].join('.');
             switch(type) {
             case textsecure.protobuf.Envelope.Type.CIPHERTEXT:
-                return axolotlInstance.decryptWhisperMessage(fromAddress, getString(blob)).then(decodeMessageContents);
+                return axolotlInstance.decryptWhisperMessage(fromAddress, getString(blob));
             case textsecure.protobuf.Envelope.Type.PREKEY_BUNDLE:
                 if (blob.readUint8() != ((3 << 4) | 3))
                     throw new Error("Bad version byte");
-                return handlePreKeyWhisperMessage(fromAddress, getString(blob)).then(decodeMessageContents);
+                return handlePreKeyWhisperMessage(fromAddress, getString(blob));
             default:
                 return new Promise.reject(new Error("Unknown message type"));
             }
