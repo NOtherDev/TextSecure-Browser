@@ -274,7 +274,7 @@ window.textsecure.messaging = function() {
         var myNumber = textsecure.storage.user.getNumber();
         var myDevice = textsecure.storage.user.getDeviceId();
         if (myDevice != 1) {
-            var sentMessage = new textsecure.protobuf.SyncMessage.SentMessage();
+            var sentMessage = new textsecure.protobuf.SyncMessage.Sent();
             sentMessage.timestamp = timestamp;
             sentMessage.message = message;
             if (destination) {
@@ -283,7 +283,7 @@ window.textsecure.messaging = function() {
             var syncMessage = new textsecure.protobuf.SyncMessage();
             syncMessage.sent = sentMessage;
             var contentMessage = new textsecure.protobuf.Content();
-            content.syncMessage = syncMessage;
+            contentMessage.syncMessage = syncMessage;
 
             return sendIndividualProto(myNumber, contentMessage, Date.now());
         }
