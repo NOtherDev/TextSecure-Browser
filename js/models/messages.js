@@ -169,7 +169,7 @@
                 }
                 if (type === 'outgoing') {
                     // lazy hack - check for receipts that arrived early.
-                    if (pushMessageContent.group.id) {  // group sync
+                    if (pushMessageContent.group && pushMessageContent.group.id) {  // group sync
                         var members = conversation.get('members') || [];
                         var receipts = window.receipts.where({ timestamp: timestamp });
                         for (var i in receipts) {

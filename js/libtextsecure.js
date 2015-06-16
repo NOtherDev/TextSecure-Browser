@@ -38820,7 +38820,6 @@ function processDecrypted(decrypted, source) {
     });
 }
 
-
 /* vim: ts=4:sw=4:expandtab
  *
  * This program is free software: you can redistribute it and/or modify
@@ -39529,6 +39528,7 @@ function generateKeys(count, progressCallback) {
             }.bind(this));
         },
         dispatchSentMessage: function(destination, timestamp, message) {
+            var source = textsecure.storage.user.getNumber();
             return processDecrypted(message, source).then(function(message) {
                 var ev = new Event('sent');
                 ev.data = {
@@ -39570,7 +39570,7 @@ function generateKeys(count, progressCallback) {
             return this.decrypt(envelope, envelope.content).then(function(result) {
                 var plaintext = result[0]; // array buffer
                 var close_session = result[1]; // function
-                var content = textsecure.protobuf.ContentMessage.decode(plaintext);
+                var content = textsecure.protobuf.Content.decode(plaintext);
                 if (content.syncMessage) {
                     return this.handleSyncMessage(envelope, content.syncMessage);
                 } else if (content.dataMessage) {
