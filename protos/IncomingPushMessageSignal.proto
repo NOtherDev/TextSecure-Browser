@@ -1,3 +1,8 @@
+package textsecure;
+
+option java_package = "org.whispersystems.textsecure.internal.push";
+option java_outer_classname = "TextSecureProtos";
+
 message Envelope {
   enum Type {
     UNKNOWN       = 0;

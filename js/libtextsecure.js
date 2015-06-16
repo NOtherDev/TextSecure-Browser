@@ -37784,17 +37784,6 @@ axolotlInternal.RecipientRecord = function() {
     textsecure.storage.axolotl = new AxolotlStore();
     var axolotlInstance = axolotl.protocol(textsecure.storage.axolotl);
 
-    var decodeMessageContents = function(res) {
-        var finalMessage = textsecure.protobuf.Message.decode(res[0]);
-
-        if ((finalMessage.flags & textsecure.protobuf.Message.Flags.END_SESSION)
-                == textsecure.protobuf.Message.Flags.END_SESSION &&
-                finalMessage.sync !== null)
-            res[1]();
-
-        return finalMessage;
-    };
-
     var handlePreKeyWhisperMessage = function(from, message) {
         try {
             return axolotlInstance.handlePreKeyWhisperMessage(from, message);
@@ -37848,8 +37837,18 @@ axolotlInternal.RecipientRecord = function() {
     };
 
     var tryMessageAgain = function(from, encodedMessage) {
-        return axolotlInstance.handlePreKeyWhisperMessage(from, encodedMessage).then(decodeMessageContents);
-    }
+        return axolotlInstance.handlePreKeyWhisperMessage(from, encodedMessage).then(function(res) {
+            var finalMessage = textsecure.protobuf.DataMessage.decode(res[0]);
+
+            if ((finalMessage.flags & textsecure.protobuf.DataMessage.Flags.END_SESSION)
+                    == textsecure.protobuf.DataMessage.Flags.END_SESSION &&
+                    finalMessage.sync !== null)
+                res[1]();
+
+            return processDecrypted(finalMessage);
+        });
+    };
+
     textsecure.replay.registerFunction(tryMessageAgain, textsecure.replay.Type.INIT_SESSION);
 
 })();
@@ -38706,8 +38705,7 @@ window.textsecure.utils = function() {
     return self;
 }();
 
-
-var handleAttachment = function(attachment) {
+function handleAttachment(attachment) {
     function getAttachment() {
         return TextSecureServer.getAttachment(attachment.id.toString());
     }
@@ -38724,11 +38722,11 @@ var handleAttachment = function(attachment) {
     }
 
     return getAttachment().
-      then(decryptAttachment).
-      then(updateAttachment);
-};
+    then(decryptAttachment).
+    then(updateAttachment);
+}
 
-textsecure.processDecrypted = function(decrypted, source) {
+function processDecrypted(decrypted, source) {
 
     // Now that its decrypted, validate the message and clean it up for consumer processing
     // Note that messages may (generally) only perform one action and we ignore remaining fields
@@ -38737,21 +38735,11 @@ textsecure.processDecrypted = function(decrypted, source) {
     if (decrypted.flags == null)
         decrypted.flags = 0;
 
-    if (decrypted.sync !== null && textsecure.storage.user.getNumber() != source) {
-        // Ignore erroneous or malicious sync context from different number
-        decrypted.sync = null;
-    }
-
-    if ((decrypted.flags & textsecure.protobuf.Message.Flags.END_SESSION)
-                == textsecure.protobuf.Message.Flags.END_SESSION) {
+    if ((decrypted.flags & textsecure.protobuf.DataMessage.Flags.END_SESSION)
+                == textsecure.protobuf.DataMessage.Flags.END_SESSION) {
         decrypted.body = null;
         decrypted.attachments = [];
         decrypted.group = null;
-        if (decrypted.sync !== null) {
-            // We didn't actually close the session - see axolotl_wrapper
-            // so just throw an error since this message makes no sense
-            throw new Error("Got a sync END_SESSION message");
-        }
         return Promise.resolve(decrypted);
     }
     if (decrypted.flags != 0) {
@@ -38830,7 +38818,8 @@ textsecure.processDecrypted = function(decrypted, source) {
     return Promise.all(promises).then(function() {
         return decrypted;
     });
-};
+}
+
 
 /* vim: ts=4:sw=4:expandtab
  *
@@ -39490,25 +39479,29 @@ function generateKeys(count, progressCallback) {
             // TODO: handle different types of requests. for now we only expect
             // PUT /messages <encrypted IncomingPushMessageSignal>
             textsecure.crypto.decryptWebsocketMessage(request.body).then(function(plaintext) {
-                var proto = textsecure.protobuf.Envelope.decode(plaintext);
+                var envelope = textsecure.protobuf.Envelope.decode(plaintext);
                 // After this point, decoding errors are not the server's
                 // fault, and we should handle them gracefully and tell the
                 // user they received an invalid message
                 request.respond(200, 'OK');
 
-                if (proto.type === textsecure.protobuf.Envelope.Type.RECEIPT) {
-                    this.onDeliveryReceipt(proto);
-                } else if (proto.synchronize) {
-                    this.handleSyncMessage(proto);
+                if (envelope.type === textsecure.protobuf.Envelope.Type.RECEIPT) {
+                    this.onDeliveryReceipt(envelope);
+                } else if (envelope.content) {
+                    this.handleContentMessage(envelope);
+                } else if (envelope.legacyMessage) {
+                    this.handleLegacyMessage(envelope);
                 } else {
-                    this.handleMessage(proto);
+                    throw new Error('Received message with no content and no legacyMessage');
                 }
 
             }.bind(this)).catch(function(e) {
                 console.log("Error handling incoming message:", e);
-                extension.trigger('error', e);
                 request.respond(500, 'Bad encrypted websocket message');
-            });
+                var ev = new Event('error');
+                ev.error = error;
+                this.target.dispatchEvent(ev);
+            }.bind(this));
         },
         getStatus: function() {
             if (this.socket) {
@@ -39522,59 +39515,94 @@ function generateKeys(count, progressCallback) {
             ev.proto = envelope;
             this.target.dispatchEvent(ev);
         },
-        onMessageReceived: function(envelope, message, close_session) {
-            if ((message.flags & textsecure.protobuf.Message.Flags.END_SESSION)
-                == textsecure.protobuf.Message.Flags.END_SESSION ) {
+        decrypt: function(envelope, ciphertext) {
+            return textsecure.protocol_wrapper.decrypt(
+                envelope.source,
+                envelope.sourceDevice,
+                envelope.type,
+                ciphertext
+            ).catch(function(error) {
+                var ev = new Event('error');
+                ev.error = error;
+                ev.proto = envelope;
+                this.target.dispatchEvent(ev);
+            }.bind(this));
+        },
+        dispatchSentMessage: function(destination, timestamp, message) {
+            return processDecrypted(message, source).then(function(message) {
+                var ev = new Event('sent');
+                ev.data = {
+                    source      : source,
+                    destination : destination,
+                    timestamp   : timestamp.toNumber(),
+                    message     : message
+                };
+                this.target.dispatchEvent(ev);
+            }.bind(this));
+        },
+        dispatchMessage: function(source, timestamp, message) {
+            return processDecrypted(message, source).then(function(message) {
+                var ev = new Event('message');
+                ev.data = {
+                    source    : source,
+                    timestamp : timestamp.toNumber(),
+                    message   : message
+                };
+                this.target.dispatchEvent(ev);
+            }.bind(this));
+        },
+        handleDataMessage: function(envelope, message, close_session) {
+            if ((message.flags & textsecure.protobuf.DataMessage.Flags.END_SESSION)
+                == textsecure.protobuf.DataMessage.Flags.END_SESSION ) {
                 close_session();
             }
-            return textsecure.processDecrypted(message, envelope.source).then(function(message) {
-                envelope.message = message;
-                var ev = new event('message');
-                ev.proto = envelope;
-                this.target.dispatchevent(ev);
-            }.bind(this));
+            return this.dispatchMessage(envelope.source, envelope.timestamp, message);
         },
-        handleMessage: function (envelope) {
-            return textsecure.protocol_wrapper.decrypt(
-                envelope.source,
-                envelope.sourceDevice,
-                envelope.type,
-                envelope.message
-            ).then(function(result) {
+        handleLegacyMessage: function (envelope) {
+            return this.decrypt(envelope, envelope.legacyMessage).then(function(result) {
                 var plaintext = result[0]; // array buffer
                 var close_session = result[1]; // function
-                var message = textsecure.protobuf.Message.decode(plaintext);
-                return this.onMessageReceived(envelope, message, close_session);
-            }.bind(this)).catch(function() {
-                var ev = new event('error');
-                ev.proto = envelope;
-                this.target.dispatchevent(ev);
+                var message = textsecure.protobuf.DataMessage.decode(plaintext);
+                return this.handleDataMessage(envelope, message, close_session);
             }.bind(this));
         },
-        handleSyncMessage: function (envelope) {
-            return textsecure.protocol_wrapper.decrypt(
-                envelope.source,
-                envelope.sourceDevice,
-                envelope.type,
-                envelope.synchronize
-            ).then(function(result) {
+        handleContentMessage: function (envelope) {
+            return this.decrypt(envelope, envelope.content).then(function(result) {
                 var plaintext = result[0]; // array buffer
                 var close_session = result[1]; // function
-                var syncMessage = textsecure.protobuf.SyncMessage.decode(plaintext);
-
-                if (syncMessage.sent) {
-                    var message = syncMessage.sent.message;
-                    syncMessage.sent.message = null;
-                    message.sync = syncMessage.sent;
-                    return this.onMessageReceived(envelope, message, close_session);
-                } else if (syncMessage.contacts) {
-                    this.onContactsReceived(syncMessage.contacts);
-                } else if (syncMessage.group) {
-                    this.onGroupReceived(syncMessage.group);
+                var content = textsecure.protobuf.ContentMessage.decode(plaintext);
+                if (content.syncMessage) {
+                    return this.handleSyncMessage(envelope, content.syncMessage);
+                } else if (content.dataMessage) {
+                    return this.handleDataMessage(envelope, content.dataMessage, close_session);
+                } else {
+                    throw new Error('Got Content message with no dataMessage and no syncMessage');
                 }
             }.bind(this));
         },
-        onContactsReceived: function(contacts) {
+        handleSyncMessage: function(envelope, syncMessage) {
+            if (envelope.source !== textsecure.storage.user.getNumber()) {
+                throw new Error('Received sync message from another number');
+            }
+            if (envelope.sourceDevice == textsecure.storage.user.getDeviceId()) {
+                throw new Error('Received sync message from our own device');
+            }
+            if (syncMessage.sent) {
+                var sentMessage = syncMessage.sent;
+                return this.dispatchSentMessage(
+                        sentMessage.destination,
+                        sentMessage.timestamp,
+                        sentMessage.message
+                );
+            } else if (syncMessage.contacts) {
+                this.handleContacts(syncMessage.contacts);
+            } else if (syncMessage.group) {
+                this.handleGroup(syncMessage.group);
+            } else {
+                throw new Error('Got SyncMessage with no sent, contacts, or group');
+            }
+        },
+        handleContacts: function(contacts) {
             var eventTarget = this.target;
             var attachmentPointer = contacts.blob;
             return handleAttachment(attachmentPointer).then(function() {
@@ -39588,7 +39616,7 @@ function generateKeys(count, progressCallback) {
                 }
             });
         },
-        onGroupReceived: function(envelope) {
+        handleGroup: function(envelope) {
             var ev = new Event('group');
             ev.group = envelope.group;
             this.target.dispatchEvent(ev);
@@ -39596,6 +39624,7 @@ function generateKeys(count, progressCallback) {
     };
 
     textsecure.MessageReceiver = MessageReceiver;
+
 
 }());
 
@@ -39714,7 +39743,7 @@ window.textsecure.messaging = function() {
                 if (numberIndex < 0) // This is potentially a multi-message rare racing-AJAX race
                     return Promise.reject("Tried to refresh group to non-member");
 
-                var proto = new textsecure.protobuf.Message();
+                var proto = new textsecure.protobuf.DataMessage();
                 proto.group = new textsecure.protobuf.GroupContext();
 
                 proto.group.id = toArrayBuffer(group.id);
@@ -39735,7 +39764,7 @@ window.textsecure.messaging = function() {
     }
 
     var tryMessageAgain = function(number, encodedMessage, timestamp) {
-        var proto = textsecure.protobuf.Message.decode(encodedMessage);
+        var proto = textsecure.protobuf.DataMessage.decode(encodedMessage);
         return new Promise(function(resolve, reject) {
             sendMessageProto(timestamp, [number], proto, function(res) {
                 if (res.failure.length > 0)
@@ -39883,7 +39912,10 @@ window.textsecure.messaging = function() {
             }
             var syncMessage = new textsecure.protobuf.SyncMessage();
             syncMessage.sent = sentMessage;
-            return sendIndividualProto(myNumber, syncMessage, Date.now());
+            var contentMessage = new textsecure.protobuf.Content();
+            content.syncMessage = syncMessage;
+
+            return sendIndividualProto(myNumber, contentMessage, Date.now());
         }
     }
 
@@ -39905,7 +39937,7 @@ window.textsecure.messaging = function() {
     }
 
     self.sendMessageToNumber = function(number, messageText, attachments, timestamp) {
-        var proto = new textsecure.protobuf.Message();
+        var proto = new textsecure.protobuf.DataMessage();
         proto.body = messageText;
 
         var promises = [];
@@ -39920,9 +39952,9 @@ window.textsecure.messaging = function() {
     }
 
     self.closeSession = function(number) {
-        var proto = new textsecure.protobuf.Message();
+        var proto = new textsecure.protobuf.DataMessage();
         proto.body = "TERMINATE";
-        proto.flags = textsecure.protobuf.Message.Flags.END_SESSION;
+        proto.flags = textsecure.protobuf.DataMessage.Flags.END_SESSION;
         return sendIndividualProto(number, proto, Date.now()).then(function(res) {
             return textsecure.storage.devices.getDeviceObjectsForNumber(number).then(function(devices) {
                 return Promise.all(devices.map(function(device) {
@@ -39935,7 +39967,7 @@ window.textsecure.messaging = function() {
     }
 
     self.sendMessageToGroup = function(groupId, messageText, attachments, timestamp) {
-        var proto = new textsecure.protobuf.Message();
+        var proto = new textsecure.protobuf.DataMessage();
         proto.body = messageText;
         proto.group = new textsecure.protobuf.GroupContext();
         proto.group.id = toArrayBuffer(groupId);
@@ -39956,7 +39988,7 @@ window.textsecure.messaging = function() {
     }
 
     self.createGroup = function(numbers, name, avatar) {
-        var proto = new textsecure.protobuf.Message();
+        var proto = new textsecure.protobuf.DataMessage();
         proto.group = new textsecure.protobuf.GroupContext();
 
         return textsecure.storage.groups.createNewGroup(numbers).then(function(group) {
@@ -39983,7 +40015,7 @@ window.textsecure.messaging = function() {
     }
 
     self.updateGroup = function(groupId, name, avatar, numbers) {
-        var proto = new textsecure.protobuf.Message();
+        var proto = new textsecure.protobuf.DataMessage();
         proto.group = new textsecure.protobuf.GroupContext();
 
         proto.group.id = toArrayBuffer(groupId);
@@ -40012,7 +40044,7 @@ window.textsecure.messaging = function() {
     }
 
     self.addNumberToGroup = function(groupId, number) {
-        var proto = new textsecure.protobuf.Message();
+        var proto = new textsecure.protobuf.DataMessage();
         proto.group = new textsecure.protobuf.GroupContext();
         proto.group.id = toArrayBuffer(groupId);
         proto.group.type = textsecure.protobuf.GroupContext.Type.UPDATE;
@@ -40027,7 +40059,7 @@ window.textsecure.messaging = function() {
     }
 
     self.setGroupName = function(groupId, name) {
-        var proto = new textsecure.protobuf.Message();
+        var proto = new textsecure.protobuf.DataMessage();
         proto.group = new textsecure.protobuf.GroupContext();
         proto.group.id = toArrayBuffer(groupId);
         proto.group.type = textsecure.protobuf.GroupContext.Type.UPDATE;
@@ -40043,7 +40075,7 @@ window.textsecure.messaging = function() {
     }
 
     self.setGroupAvatar = function(groupId, avatar) {
-        var proto = new textsecure.protobuf.Message();
+        var proto = new textsecure.protobuf.DataMessage();
         proto.group = new textsecure.protobuf.GroupContext();
         proto.group.id = toArrayBuffer(groupId);
         proto.group.type = textsecure.protobuf.GroupContext.Type.UPDATE;
@@ -40061,7 +40093,7 @@ window.textsecure.messaging = function() {
     }
 
     self.leaveGroup = function(groupId) {
-        var proto = new textsecure.protobuf.Message();
+        var proto = new textsecure.protobuf.DataMessage();
         proto.group = new textsecure.protobuf.GroupContext();
         proto.group.id = toArrayBuffer(groupId);
         proto.group.type = textsecure.protobuf.GroupContext.Type.QUIT;

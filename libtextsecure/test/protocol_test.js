@@ -22,7 +22,7 @@ describe('Protocol', function() {
         it('works', function(done) {
             localStorage.clear();
 
-            var text_message = new textsecure.protobuf.Message();
+            var text_message = new textsecure.protobuf.DataMessage();
             text_message.body = "Hi Mom";
             var server_message = {
                 type: 4, // unencrypted

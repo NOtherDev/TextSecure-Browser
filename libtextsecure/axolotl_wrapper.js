@@ -5,17 +5,6 @@
     textsecure.storage.axolotl = new AxolotlStore();
     var axolotlInstance = axolotl.protocol(textsecure.storage.axolotl);
 
-    var decodeMessageContents = function(res) {
-        var finalMessage = textsecure.protobuf.Message.decode(res[0]);
-
-        if ((finalMessage.flags & textsecure.protobuf.Message.Flags.END_SESSION)
-                == textsecure.protobuf.Message.Flags.END_SESSION &&
-                finalMessage.sync !== null)
-            res[1]();
-
-        return finalMessage;
-    };
-
     var handlePreKeyWhisperMessage = function(from, message) {
         try {
             return axolotlInstance.handlePreKeyWhisperMessage(from, message);
@@ -69,8 +58,18 @@
     };
 
     var tryMessageAgain = function(from, encodedMessage) {
-        return axolotlInstance.handlePreKeyWhisperMessage(from, encodedMessage).then(decodeMessageContents);
-    }
+        return axolotlInstance.handlePreKeyWhisperMessage(from, encodedMessage).then(function(res) {
+            var finalMessage = textsecure.protobuf.DataMessage.decode(res[0]);
+
+            if ((finalMessage.flags & textsecure.protobuf.DataMessage.Flags.END_SESSION)
+                    == textsecure.protobuf.DataMessage.Flags.END_SESSION &&
+                    finalMessage.sync !== null)
+                res[1]();
+
+            return processDecrypted(finalMessage);
+        });
+    };
+
     textsecure.replay.registerFunction(tryMessageAgain, textsecure.replay.Type.INIT_SESSION);
 
 })();

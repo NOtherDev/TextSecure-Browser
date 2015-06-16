@@ -34,7 +34,7 @@
             }
         },
         isEndSession: function() {
-            var flag = textsecure.protobuf.Message.Flags.END_SESSION;
+            var flag = textsecure.protobuf.DataMessage.Flags.END_SESSION;
             return !!(this.get('flags') & flag);
         },
         isGroupUpdate: function() {
@@ -128,11 +128,9 @@
             // identity key change.
             var message = this;
             var source = message.get('source');
+            var type = source === textsecure.storage.user.getNumber() ? 'outgoing' : 'incoming';
             var timestamp = message.get('sent_at');
-            var conversationId = source;
-            if (pushMessageContent.sync) {
-                conversationId = pushMessageContent.sync.destination;
-            }
+            var conversationId = message.get('conversationId');
             if (pushMessageContent.group) {
                 conversationId = pushMessageContent.group.id;
             }
@@ -169,24 +167,9 @@
                         message.set({group_update: group_update});
                     }
                 }
-                var type = 'incoming';
-                if (pushMessageContent.sync) {
-                    type = 'outgoing';
-                    timestamp = pushMessageContent.sync.timestamp.toNumber();
-
+                if (type === 'outgoing') {
                     // lazy hack - check for receipts that arrived early.
-                    if (pushMessageContent.sync.destination) {
-                        var receipt = window.receipts.findWhere({
-                            timestamp: timestamp,
-                            source: pushMessageContent.sync.destination
-                        });
-                        if (receipt) {
-                            window.receipts.remove(receipt);
-                            message.set({
-                                delivered: (message.get('delivered') || 0) + 1
-                            });
-                        }
-                    } else if (pushMessageContent.group.id) {  // group sync
+                    if (pushMessageContent.group.id) {  // group sync
                         var members = conversation.get('members') || [];
                         var receipts = window.receipts.where({ timestamp: timestamp });
                         for (var i in receipts) {
@@ -198,7 +181,16 @@
                             }
                         }
                     } else {
-                        throw new Error('Received sync message with no destination and no group id');
+                        var receipt = window.receipts.findWhere({
+                            timestamp: timestamp,
+                            source: conversationId
+                        });
+                        if (receipt) {
+                            window.receipts.remove(receipt);
+                            message.set({
+                                delivered: (message.get('delivered') || 0) + 1
+                            });
+                        }
                     }
                 }
                 attributes.active_at = now;

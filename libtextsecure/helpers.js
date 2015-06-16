@@ -125,8 +125,7 @@ window.textsecure.utils = function() {
     return self;
 }();
 
-
-var handleAttachment = function(attachment) {
+function handleAttachment(attachment) {
     function getAttachment() {
         return TextSecureServer.getAttachment(attachment.id.toString());
     }
@@ -143,11 +142,11 @@ var handleAttachment = function(attachment) {
     }
 
     return getAttachment().
-      then(decryptAttachment).
-      then(updateAttachment);
-};
+    then(decryptAttachment).
+    then(updateAttachment);
+}
 
-textsecure.processDecrypted = function(decrypted, source) {
+function processDecrypted(decrypted, source) {
 
     // Now that its decrypted, validate the message and clean it up for consumer processing
     // Note that messages may (generally) only perform one action and we ignore remaining fields
@@ -156,21 +155,11 @@ textsecure.processDecrypted = function(decrypted, source) {
     if (decrypted.flags == null)
         decrypted.flags = 0;
 
-    if (decrypted.sync !== null && textsecure.storage.user.getNumber() != source) {
-        // Ignore erroneous or malicious sync context from different number
-        decrypted.sync = null;
-    }
-
-    if ((decrypted.flags & textsecure.protobuf.Message.Flags.END_SESSION)
-                == textsecure.protobuf.Message.Flags.END_SESSION) {
+    if ((decrypted.flags & textsecure.protobuf.DataMessage.Flags.END_SESSION)
+                == textsecure.protobuf.DataMessage.Flags.END_SESSION) {
         decrypted.body = null;
         decrypted.attachments = [];
         decrypted.group = null;
-        if (decrypted.sync !== null) {
-            // We didn't actually close the session - see axolotl_wrapper
-            // so just throw an error since this message makes no sense
-            throw new Error("Got a sync END_SESSION message");
-        }
         return Promise.resolve(decrypted);
     }
     if (decrypted.flags != 0) {
@@ -249,4 +238,4 @@ textsecure.processDecrypted = function(decrypted, source) {
     return Promise.all(promises).then(function() {
         return decrypted;
     });
-};
+}

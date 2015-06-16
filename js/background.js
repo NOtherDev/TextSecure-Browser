@@ -49,6 +49,7 @@
             window.addEventListener('receipt', onDeliveryReceipt);
             window.addEventListener('message', onMessageReceived);
             window.addEventListener('group', onGroupReceived);
+            window.addEventListener('sent', onSentMessage);
             window.addEventListener('error', onError);
             messageReceiver.connect();
         }
@@ -76,8 +77,12 @@
 
         function onError(ev) {
             var e = ev.error;
+            if (!ev.proto) {
+                console.log(e);
+                throw e;
+            }
             var envelope = ev.proto;
-            var message = initMessage(envelope.source, envelope.timestamp.toNumber());
+            var message = initIncomingMessage(envelope.source, envelope.timestamp.toNumber());
             if (e.name === 'IncomingIdentityKeyError') {
                 message.save({ errors : [e] }).then(function() {
                     extension.trigger('updateInbox');
@@ -97,12 +102,27 @@
         }
 
         function onMessageReceived(ev) {
-            var envelope = ev.proto;
-            var message = initMessage(envelope.source, envelope.timestamp.toNumber());
-            message.handlePushMessageContent(envelope.message);
+            var data = ev.data;
+            var message = initIncomingMessage(data.source, data.timestamp);
+            message.handlePushMessageContent(data.message);
         }
 
-        function initMessage(source, timestamp) {
+        function onSentMessage(ev) {
+            var now = new Date().getTime();
+            var data = ev.data;
+
+            var message = new Whisper.Message({
+                source         : textsecure.storage.user.getNumber(),
+                sent_at        : data.timestamp,
+                received_at    : now,
+                conversationId : data.destination,
+                type           : 'outgoing'
+            });
+
+            message.handlePushMessageContent(data.message);
+        }
+
+        function initIncomingMessage(source, timestamp) {
             var now = new Date().getTime();
 
             var message = new Whisper.Message({

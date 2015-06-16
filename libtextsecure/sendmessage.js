@@ -113,7 +113,7 @@ window.textsecure.messaging = function() {
                 if (numberIndex < 0) // This is potentially a multi-message rare racing-AJAX race
                     return Promise.reject("Tried to refresh group to non-member");
 
-                var proto = new textsecure.protobuf.Message();
+                var proto = new textsecure.protobuf.DataMessage();
                 proto.group = new textsecure.protobuf.GroupContext();
 
                 proto.group.id = toArrayBuffer(group.id);
@@ -134,7 +134,7 @@ window.textsecure.messaging = function() {
     }
 
     var tryMessageAgain = function(number, encodedMessage, timestamp) {
-        var proto = textsecure.protobuf.Message.decode(encodedMessage);
+        var proto = textsecure.protobuf.DataMessage.decode(encodedMessage);
         return new Promise(function(resolve, reject) {
             sendMessageProto(timestamp, [number], proto, function(res) {
                 if (res.failure.length > 0)
@@ -282,7 +282,10 @@ window.textsecure.messaging = function() {
             }
             var syncMessage = new textsecure.protobuf.SyncMessage();
             syncMessage.sent = sentMessage;
-            return sendIndividualProto(myNumber, syncMessage, Date.now());
+            var contentMessage = new textsecure.protobuf.Content();
+            content.syncMessage = syncMessage;
+
+            return sendIndividualProto(myNumber, contentMessage, Date.now());
         }
     }
 
@@ -304,7 +307,7 @@ window.textsecure.messaging = function() {
     }
 
     self.sendMessageToNumber = function(number, messageText, attachments, timestamp) {
-        var proto = new textsecure.protobuf.Message();
+        var proto = new textsecure.protobuf.DataMessage();
         proto.body = messageText;
 
         var promises = [];
@@ -319,9 +322,9 @@ window.textsecure.messaging = function() {
     }
 
     self.closeSession = function(number) {
-        var proto = new textsecure.protobuf.Message();
+        var proto = new textsecure.protobuf.DataMessage();
         proto.body = "TERMINATE";
-        proto.flags = textsecure.protobuf.Message.Flags.END_SESSION;
+        proto.flags = textsecure.protobuf.DataMessage.Flags.END_SESSION;
         return sendIndividualProto(number, proto, Date.now()).then(function(res) {
             return textsecure.storage.devices.getDeviceObjectsForNumber(number).then(function(devices) {
                 return Promise.all(devices.map(function(device) {
@@ -334,7 +337,7 @@ window.textsecure.messaging = function() {
     }
 
     self.sendMessageToGroup = function(groupId, messageText, attachments, timestamp) {
-        var proto = new textsecure.protobuf.Message();
+        var proto = new textsecure.protobuf.DataMessage();
         proto.body = messageText;
         proto.group = new textsecure.protobuf.GroupContext();
         proto.group.id = toArrayBuffer(groupId);
@@ -355,7 +358,7 @@ window.textsecure.messaging = function() {
     }
 
     self.createGroup = function(numbers, name, avatar) {
-        var proto = new textsecure.protobuf.Message();
+        var proto = new textsecure.protobuf.DataMessage();
         proto.group = new textsecure.protobuf.GroupContext();
 
         return textsecure.storage.groups.createNewGroup(numbers).then(function(group) {
@@ -382,7 +385,7 @@ window.textsecure.messaging = function() {
     }
 
     self.updateGroup = function(groupId, name, avatar, numbers) {
-        var proto = new textsecure.protobuf.Message();
+        var proto = new textsecure.protobuf.DataMessage();
         proto.group = new textsecure.protobuf.GroupContext();
 
         proto.group.id = toArrayBuffer(groupId);
@@ -411,7 +414,7 @@ window.textsecure.messaging = function() {
     }
 
     self.addNumberToGroup = function(groupId, number) {
-        var proto = new textsecure.protobuf.Message();
+        var proto = new textsecure.protobuf.DataMessage();
         proto.group = new textsecure.protobuf.GroupContext();
         proto.group.id = toArrayBuffer(groupId);
         proto.group.type = textsecure.protobuf.GroupContext.Type.UPDATE;
@@ -426,7 +429,7 @@ window.textsecure.messaging = function() {
     }
 
     self.setGroupName = function(groupId, name) {
-        var proto = new textsecure.protobuf.Message();
+        var proto = new textsecure.protobuf.DataMessage();
         proto.group = new textsecure.protobuf.GroupContext();
         proto.group.id = toArrayBuffer(groupId);
         proto.group.type = textsecure.protobuf.GroupContext.Type.UPDATE;
@@ -442,7 +445,7 @@ window.textsecure.messaging = function() {
     }
 
     self.setGroupAvatar = function(groupId, avatar) {
-        var proto = new textsecure.protobuf.Message();
+        var proto = new textsecure.protobuf.DataMessage();
         proto.group = new textsecure.protobuf.GroupContext();
         proto.group.id = toArrayBuffer(groupId);
         proto.group.type = textsecure.protobuf.GroupContext.Type.UPDATE;
@@ -460,7 +463,7 @@ window.textsecure.messaging = function() {
     }
 
     self.leaveGroup = function(groupId) {
-        var proto = new textsecure.protobuf.Message();
+        var proto = new textsecure.protobuf.DataMessage();
         proto.group = new textsecure.protobuf.GroupContext();
         proto.group.id = toArrayBuffer(groupId);
         proto.group.type = textsecure.protobuf.GroupContext.Type.QUIT;
