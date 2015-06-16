@@ -54,6 +54,11 @@ window.textsecure.messaging = function() {
         var relay = undefined;
         var promises = [];
 
+        var jsonContentField = 'content';
+        if (message instanceof textsecure.protobuf.DataMessage) {
+            jsonContentField = 'body'; // legacy
+        }
+
         var addEncryptionFor = function(i) {
             if (deviceObjectList[i].relay !== undefined) {
                 if (relay === undefined)
@@ -74,9 +79,9 @@ window.textsecure.messaging = function() {
                             type: encryptedMsg.type,
                             destinationDeviceId: textsecure.utils.unencodeNumber(deviceObjectList[i].encodedNumber)[1],
                             destinationRegistrationId: registrationId,
-                            body: encryptedMsg.body,
                             timestamp: timestamp
                         };
+                        jsonData[i][jsonContentField] = encryptedMsg.body;
 
                         if (deviceObjectList[i].relay !== undefined)
                             jsonData[i].relay = deviceObjectList[i].relay;

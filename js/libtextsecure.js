@@ -39170,8 +39170,13 @@ TextSecureServer = function () {
 
     self.sendMessages = function(destination, messageArray) {
         //TODO: Do this conversion somewhere else?
-        for (var i = 0; i < messageArray.length; i++)
-            messageArray[i].body = btoa(messageArray[i].body);
+        for (var i = 0; i < messageArray.length; i++) {
+            if (messageArray[i].body) {
+                messageArray[i].body = btoa(messageArray[i].body);
+            } else if (messageArray[i].content) {
+                messageArray[i].content = btoa(messageArray[i].content);
+            }
+        }
         var jsonData = { messages: messageArray };
         if (messageArray[0].relay !== undefined)
             jsonData.relay = messageArray[0].relay;
@@ -39684,6 +39689,11 @@ window.textsecure.messaging = function() {
         var relay = undefined;
         var promises = [];
 
+        var jsonContentField = 'content';
+        if (message instanceof textsecure.protobuf.DataMessage) {
+            jsonContentField = 'body'; // legacy
+        }
+
         var addEncryptionFor = function(i) {
             if (deviceObjectList[i].relay !== undefined) {
                 if (relay === undefined)
@@ -39704,9 +39714,9 @@ window.textsecure.messaging = function() {
                             type: encryptedMsg.type,
                             destinationDeviceId: textsecure.utils.unencodeNumber(deviceObjectList[i].encodedNumber)[1],
                             destinationRegistrationId: registrationId,
-                            body: encryptedMsg.body,
                             timestamp: timestamp
                         };
+                        jsonData[i][jsonContentField] = encryptedMsg.body;
 
                         if (deviceObjectList[i].relay !== undefined)
                             jsonData[i].relay = deviceObjectList[i].relay;
